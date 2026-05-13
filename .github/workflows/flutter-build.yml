@@ -770,7 +770,7 @@ jobs:
   #         files: |
   #           rustdesk*-${{ matrix.job.arch }}.dmg
 
-  publish_unsigned:
+  # publish_unsigned:
     needs:
       - build-for-macOS
       - build-for-windows-flutter
