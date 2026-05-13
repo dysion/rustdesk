@@ -942,7 +942,8 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
             title: Text(translate("Enhancements")),
             tiles: enhancementsTiles,
           ),
-        SettingsSection(
+        if (false) // hide About section
+          SettingsSection(
           title: Text(translate("About")),
           tiles: [
             SettingsTile(

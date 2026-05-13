@@ -60,3 +60,6 @@
 * Do not refactor unrelated code.
 * Do not make formatting-only changes.
 * Keep naming/style consistent with nearby code.
+
+## Agent Guide
+1. 任何时候接收到我的指令，首先确定是否真的理解指令，有不清楚的地方需要询问我，待我确认后再开始执行。
