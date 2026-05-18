@@ -29,7 +29,10 @@ class SettingsPage extends StatefulWidget implements PageShape {
   final icon = Icon(Icons.settings);
 
   @override
-  final appBarActions = bind.isDisableSettings() ? [] : [ScanButton()];
+  // final appBarActions = bind.isDisableSettings() ? [] : [ScanButton()];
+  
+  // Hide scan button。 Steven 20260515
+  final appBarActions = bind.isDisableSettings() ? [] : [];
 
   @override
   State<SettingsPage> createState() => _SettingsState();
@@ -920,11 +923,12 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
               ),
             ],
           ),
-        if (isAndroid &&
-            !disabledSettings &&
-            !outgoingOnly &&
-            !hideSecuritySettings)
-          SettingsSection(title: Text('2FA'), tiles: tfaTiles),
+        if (false) // hide 2FA section
+          if (isAndroid &&
+              !disabledSettings &&
+              !outgoingOnly &&
+              !hideSecuritySettings)
+            SettingsSection(title: Text('2FA'), tiles: tfaTiles),
         if (isAndroid &&
             !disabledSettings &&
             !outgoingOnly &&
@@ -933,7 +937,8 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
             title: Text(translate("Share screen")),
             tiles: shareScreenTiles,
           ),
-        if (!bind.isIncomingOnly()) defaultDisplaySection(),
+        if (false) // hide Display Settings
+          if (!bind.isIncomingOnly()) defaultDisplaySection(),
         if (isAndroid &&
             !disabledSettings &&
             !outgoingOnly &&
