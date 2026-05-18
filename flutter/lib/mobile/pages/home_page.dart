@@ -54,7 +54,10 @@ class HomePageState extends State<HomePage> {
     }
     if (isAndroid && !bind.isOutgoingOnly()) {
       _chatPageTabIndex = _pages.length;
-      _pages.addAll([ChatPage(type: ChatPageType.mobileMain), ServerPage()]);
+      _pages.addAll([
+        if (false) ChatPage(type: ChatPageType.mobileMain), // hide Chat tab
+        ServerPage()
+      ]);
     }
     _pages.add(SettingsPage());
   }
@@ -188,7 +191,7 @@ class WebHomePage extends StatelessWidget {
           return;
         }
         list.removeAt(0);
-        fakelink = "rustdesk://${list.join(s)}";
+        fakelink = "jdesk://${list.join(s)}";
         break;
       }
     }

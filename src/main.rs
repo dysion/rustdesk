@@ -46,9 +46,9 @@ fn main() {
         -k, --key=[KEY] ''
        -s, --server=[] 'Start server'",
     );
-    let matches = App::new("rustdesk")
+    let matches = App::new("jdesk")
         .version(crate::VERSION)
-        .author("John Wood")
+        .author("JDesk")
         .about("Desk")
         .args_from_usage(&args)
         .get_matches();
