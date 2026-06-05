@@ -38,7 +38,7 @@ class SettingsPage extends StatefulWidget implements PageShape {
   State<SettingsPage> createState() => _SettingsState();
 }
 
-const url = 'https://rustdesk.com/';
+const url = 'https://rd.com/';
 
 enum KeepScreenOn {
   never,
@@ -363,6 +363,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
             })
     ];
     final List<AbstractSettingsTile> shareScreenTiles = [
+      if (false) // hide Deny LAN discovery
       SettingsTile.switchTile(
         title: Text(translate('Deny LAN discovery')),
         initialValue: _denyLANDiscovery,
@@ -379,6 +380,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 });
               },
       ),
+      if (false) // hide Use IP Whitelisting
       SettingsTile.switchTile(
         title: Row(children: [
           Expanded(child: Text(translate('Use IP Whitelisting'))),
@@ -415,6 +417,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 });
               },
       ),
+      if (false) // hide Enable recording session
       SettingsTile.switchTile(
         title: Text(translate('Enable recording session')),
         initialValue: _enableRecordSession,
@@ -429,6 +432,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 });
               },
       ),
+      if (false) // hide Direct IP Access
       SettingsTile.switchTile(
         title: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -476,6 +480,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 setState(() {});
               },
       ),
+      if (false) // hide auto_disconnect_option
       SettingsTile.switchTile(
         title: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -724,6 +729,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                     setState(callback);
                   });
                 }),
+          if (false) // hide Socks5/Http(s) Proxy
           if (!_hideNetwork && !_hideProxy)
             SettingsTile(
                 title: Text(translate('Socks5/Http(s) Proxy')),
@@ -731,6 +737,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 onPressed: (context) {
                   changeSocks5Proxy();
                 }),
+          if (false) // hide Use WebSocket
           if (!disabledSettings && !_hideNetwork && !_hideWebSocket)
             SettingsTile.switchTile(
               title: Text(translate('Use WebSocket')),
@@ -778,6 +785,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                       });
                     },
             ),
+          if (false) // hide Enable UDP hole punching
           if (!incomingOnly)
             SettingsTile.switchTile(
               title: Text(translate('Enable UDP hole punching')),
@@ -791,6 +799,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 });
               },
             ),
+          if (false) // hide Enable IPv6 P2P connection
           if (!incomingOnly)
             SettingsTile.switchTile(
               title: Text(translate('Enable IPv6 P2P connection')),
@@ -804,12 +813,14 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 });
               },
             ),
+          if (false) // hide Language
           SettingsTile(
               title: Text(translate('Language')),
               leading: Icon(Icons.translate),
               onPressed: (context) {
                 showLanguageSettings(gFFI.dialogManager);
               }),
+          if (false) // hide Light/Dark Theme
           SettingsTile(
             title: Text(translate(
                 Theme.of(context).brightness == Brightness.light
@@ -822,6 +833,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
               showThemeSettings(gFFI.dialogManager);
             },
           ),
+          if (false) // hide note-at-conn-end-tip
           if (!bind.isDisableAccount())
             SettingsTile.switchTile(
               title: Text(translate('note-at-conn-end-tip')),
@@ -875,6 +887,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
           SettingsSection(
             title: Text(translate("Recording")),
             tiles: [
+              if (false) // hide Auto record incoming sessions
               if (!outgoingOnly)
                 SettingsTile.switchTile(
                   title:
@@ -896,6 +909,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                           });
                         },
                 ),
+              if (false) // hide Auto record outgoing sessions
               if (!incomingOnly)
                 SettingsTile.switchTile(
                   title:
@@ -958,7 +972,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 title: Text(translate("Version: ") + version),
                 value: Padding(
                   padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Text('rustdesk.com',
+                  child: Text('rd.com',
                       style: TextStyle(
                         decoration: TextDecoration.underline,
                       )),
@@ -983,7 +997,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
             SettingsTile(
               title: Text(translate("Privacy Statement")),
               onPressed: (context) =>
-                  launchUrlString('https://rustdesk.com/privacy.html'),
+                  launchUrlString('https://rd.com/privacy.html'),
               leading: Icon(Icons.privacy_tip),
             )
           ],
@@ -1096,12 +1110,12 @@ void showAbout(OverlayDialogManager dialogManager) {
         Text('Version: $version'),
         InkWell(
             onTap: () async {
-              const url = 'https://rustdesk.com/';
+              const url = 'https://rd.com/';
               await launchUrl(Uri.parse(url));
             },
             child: Padding(
               padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text('rustdesk.com',
+              child: Text('rd.com',
                   style: TextStyle(
                     decoration: TextDecoration.underline,
                   )),
