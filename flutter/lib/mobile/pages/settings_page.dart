@@ -282,7 +282,8 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         child: Column(
       children: [
         if (bind.isCustomClient())
-          Align(
+          if (false) // hide powered by
+            Align(
             alignment: Alignment.center,
             child: loadPowered(context),
           ),
