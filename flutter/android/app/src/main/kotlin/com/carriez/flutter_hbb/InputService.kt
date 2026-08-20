@@ -60,6 +60,9 @@ const val WHEEL_STEP = 120
 const val WHEEL_DURATION = 50L
 const val LONG_TAP_DELAY = 200L
 
+// MediaProjection authorization dialog auto-click configuration
+const val AUTO_CLICK_MEDIA_PROJECTION_DELAY_MS = 5000L  // wait 5s before clicking, for debugging visibility
+
 class InputService : AccessibilityService() {
 
     companion object {
@@ -69,6 +72,11 @@ class InputService : AccessibilityService() {
     }
 
     private val logTag = "input service"
+    private val autoClickHandler = Handler(Looper.getMainLooper())
+    private var autoClickRunnable: Runnable? = null
+    // Guard to avoid clicking the same dialog multiple times within a short window
+    private var lastAutoClickTime = 0L
+    private var lastAutoClickPackage = ""
     private var leftIsDown = false
     private var touchPath = Path()
     private var stroke: GestureDescription.StrokeDescription? = null
@@ -711,6 +719,101 @@ class InputService : AccessibilityService() {
 
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        // Detect MediaProjection authorization dialog and auto-click after a delay.
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val pkg = event.packageName?.toString() ?: ""
+            val cls = event.className?.toString() ?: ""
+            Log.d(logTag, "window state changed, package:$pkg class:$cls")
+
+            // MediaProjection consent dialog is hosted by the system UI / media projection
+            // activity. Different OEMs use different package names, so we match on class name
+            // keywords as well as package name keywords.
+            if (isMediaProjectionDialog(pkg, cls)) {
+                Log.w(logTag, "MediaProjection dialog detected, scheduling auto-click in ${AUTO_CLICK_MEDIA_PROJECTION_DELAY_MS}ms")
+                scheduleAutoClick()
+            }
+        }
+    }
+
+    /**
+     * Heuristically detect whether the current window is the screen-capture
+     * (MediaProjection) consent dialog.
+     */
+    private fun isMediaProjectionDialog(pkg: String, cls: String): Boolean {
+        val p = pkg.lowercase()
+        val c = cls.lowercase()
+        // System UI / MediaProjection permission activity keywords
+        val packageKeywords = listOf("mediaprojection", "mediaprojectionpermission", "systemui")
+        val classKeywords = listOf(
+            "mediaprojection", "mediaprojectionpermission",
+            "mediaprojectionactivity", "launcherdialog"
+        )
+        if (packageKeywords.any { p.contains(it) }) return true
+        if (classKeywords.any { c.contains(it) }) return true
+        return false
+    }
+
+    private fun scheduleAutoClick() {
+        autoClickRunnable?.let { autoClickHandler.removeCallbacks(it) }
+        autoClickRunnable = Runnable {
+            autoClickRunnable = null
+            performMediaProjectionAutoClick()
+        }
+        autoClickHandler.postDelayed(autoClickRunnable!!, AUTO_CLICK_MEDIA_PROJECTION_DELAY_MS)
+    }
+
+    /**
+     * Find the "Start now" / "立即开始" button inside the MediaProjection dialog
+     * and click it via accessibility gesture.
+     */
+    @RequiresApi(Build.VERSION_CODES.N)
+    private fun performMediaProjectionAutoClick() {
+        val now = System.currentTimeMillis()
+        val root = rootInActiveWindow ?: run {
+            Log.w(logTag, "performMediaProjectionAutoClick: no active window")
+            return
+        }
+
+        val btn = findConfirmButton(root) ?: run {
+            Log.w(logTag, "performMediaProjectionAutoClick: confirm button not found")
+            return
+        }
+
+        val rect = Rect()
+        btn.getBoundsInScreen(rect)
+        if (rect.isEmpty) {
+            Log.w(logTag, "performMediaProjectionAutoClick: button rect empty")
+            return
+        }
+        val cx = rect.centerX()
+        val cy = rect.centerY()
+        Log.w(logTag, "performMediaProjectionAutoClick: clicking at ($cx,$cy), text=${btn.text}")
+        performClick(cx, cy, 50)
+    }
+
+    /**
+     * Recursively search the node tree for the "start/confirm" button of the
+     * screen-capture consent dialog.
+     */
+    private fun findConfirmButton(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        // Button keywords across common locales (English / Chinese / Korean for Samsung)
+        val confirmTexts = listOf(
+            "start now", "start", "立即开始", "开始", "시작", "allow", "同意", "확인"
+        )
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.addLast(root)
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            val text = node.text?.toString()?.trim()?.lowercase() ?: ""
+            val isButton = node.isClickable || node.className?.toString()?.contains("Button") == true
+            if (isButton && confirmTexts.any { text == it || text.contains(it) }) {
+                return node
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.addLast(it) }
+            }
+        }
+        return null
     }
 
     override fun onServiceConnected() {

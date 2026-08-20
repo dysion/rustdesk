@@ -220,6 +220,24 @@ class MainService : Service() {
     private var imageReader: ImageReader? = null
     private var virtualDisplay: VirtualDisplay? = null
 
+    // MediaProjection callback: when the system stops the projection (e.g. screen locked
+    // with STOP_REASON_KEYGUARD), the projection token becomes invalid. We must clear the
+    // stale mediaProjection/virtualDisplay so the next startCapture re-requests permission
+    // instead of reusing a dead projection (which produces no frames and fails audio).
+    private val mediaProjectionCallback = object : MediaProjection.Callback() {
+        override fun onStop() {
+            Log.w(logTag, "MediaProjection stopped by system, clearing stale projection")
+            synchronized(this@MainService) {
+                if (virtualDisplay != null) {
+                    virtualDisplay?.setSurface(null)
+                    virtualDisplay?.release()
+                    virtualDisplay = null
+                }
+                mediaProjection = null
+            }
+        }
+    }
+
     // audio
     private val audioRecordHandle = AudioRecordHandle(this, { isStart }, { isAudioStart })
 
@@ -339,6 +357,7 @@ class MainService : Service() {
             intent.getParcelableExtra<Intent>(EXT_MEDIA_PROJECTION_RES_INTENT)?.let {
                 mediaProjection =
                     mediaProjectionManager.getMediaProjection(Activity.RESULT_OK, it)
+                mediaProjection?.registerCallback(mediaProjectionCallback, serviceHandler)
                 checkMediaPermission()
                 _isReady = true
             } ?: let {
@@ -408,7 +427,10 @@ class MainService : Service() {
             return true
         }
         if (mediaProjection == null) {
-            Log.w(logTag, "startCapture fail,mediaProjection is null")
+            // The projection may have been stopped by the system (e.g. screen lock).
+            // Re-request permission so the user can re-confirm projection.
+            Log.w(logTag, "startCapture: mediaProjection is null, requestMediaProjection")
+            requestMediaProjection()
             return false
         }
         
@@ -486,6 +508,7 @@ class MainService : Service() {
             virtualDisplay = null
         }
 
+        mediaProjection?.unregisterCallback(mediaProjectionCallback)
         mediaProjection = null
         checkMediaPermission()
         stopForeground(true)

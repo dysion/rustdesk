@@ -1,7 +1,7 @@
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowsChanged"
+    android:accessibilityEventTypes="typeWindowsChanged|typeWindowStateChanged"
     android:canRetrieveWindowContent="true"
-    android:accessibilityFlags="flagDefault"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
     android:notificationTimeout="50"
     android:description="@string/accessibility_service_description"
     android:canPerformGestures="true"/>

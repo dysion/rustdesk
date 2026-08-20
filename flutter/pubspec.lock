@@ -117,7 +117,7 @@ packages:
       sha256: b59d2769769efd6c9ff6d4c4cede0be115a566afc591705c2040b707534b1172
       url: "https://pub.dev"
     source: hosted
-    version: "2.1.0"
+    version: "2.2.0"
   build_config:
     dependency: transitive
     description:
@@ -643,7 +643,7 @@ packages:
       sha256: d44bf546b13025ec7353091516f6881f1d4c633993cb109c3916c3a0159dadf1
       url: "https://pub.dev"
     source: hosted
-    version: "2.1.0"
+    version: "2.2.0"
   flutter_web_plugins:
     dependency: transitive
     description: flutter
@@ -920,7 +920,7 @@ packages:
       sha256: "34faa6639a78c7e3cbe79be6f9f96535867e879748ade7d17c9b1ae7536293bd"
       url: "https://pub.dev"
     source: hosted
-    version: "2.1.0"
+    version: "2.2.0"
   package_config:
     dependency: transitive
     description:
