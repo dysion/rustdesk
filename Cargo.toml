@@ -1,6 +1,6 @@
 [package]
 name = "jdesk"
-version = "2.2.0"
+version = "2.2.1"
 authors = ["jdesk <info@jdesk.com>"]
 edition = "2021"
 build= "build.rs"
