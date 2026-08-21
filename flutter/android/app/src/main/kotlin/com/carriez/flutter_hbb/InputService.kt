@@ -816,7 +816,10 @@ class InputService : AccessibilityService() {
     private fun dumpAllWindows(tag: String) {
         Log.d(logTag, "[AutoClick][Dump:$tag] ==== all windows (${windows.size}) ====")
         for (w in windows) {
-            Log.d(logTag, "[AutoClick][Dump:$tag] -- window: ${w.packageName} active=${w.isActive} type=${w.type}")
+            // Note: AccessibilityWindowInfo.getPackageName() requires API 24 (minSdk is 22),
+            // so read the package name from the window root node instead (API 16).
+            val pkg = w.root?.packageName ?: "unknown"
+            Log.d(logTag, "[AutoClick][Dump:$tag] -- window: $pkg active=${w.isActive} type=${w.type}")
             w.root?.let { dumpNodeTree(it, 1) }
         }
     }
@@ -870,8 +873,13 @@ class InputService : AccessibilityService() {
         node.getBoundsInScreen(rect)
         if (rect.isEmpty) return false
         Log.d(logTag, "[AutoClick] fallback gesture click at (${rect.centerX()},${rect.centerY()})")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            Log.e(logTag, "[AutoClick] gesture click requires API 24+")
+            return false
+        }
         return try {
             performClick(rect.centerX(), rect.centerY(), 50)
+            true
         } catch (e: Exception) {
             Log.e(logTag, "[AutoClick] gesture click error: $e")
             false
