@@ -1003,6 +1003,21 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
             )
           ],
         ),
+        // Show version at the bottom of Settings page for debugging
+        CustomSettingsSection(
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.only(top: 12, bottom: 24),
+            child: Text(
+              'version: $version',
+              textAlign: TextAlign.center,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: Theme.of(context).disabledColor),
+            ),
+          ),
+        ),
       ],
     );
     return settings;

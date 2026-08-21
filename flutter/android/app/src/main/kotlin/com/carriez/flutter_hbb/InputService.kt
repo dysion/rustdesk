@@ -60,8 +60,25 @@ const val WHEEL_STEP = 120
 const val WHEEL_DURATION = 50L
 const val LONG_TAP_DELAY = 200L
 
-// MediaProjection authorization dialog auto-click configuration
-const val AUTO_CLICK_MEDIA_PROJECTION_DELAY_MS = 5000L  // wait 5s before clicking, for debugging visibility
+// ==================== MediaProjection auto-click (3-step state machine) ====================
+// Real flow verified on Samsung A37 / Android 16:
+//   Step 1: click the dropdown (Spinner) in the consent dialog
+//   Step 2: click "Share entire screen" option in the popup list
+//   Step 3: click the "Share screen" confirm button at bottom-right
+const val AUTO_CLICK_MEDIA_PROJECTION_DELAY_MS = 5000L   // debug: wait 5s so tester can see the dialog
+const val AUTO_CLICK_STEP_TIMEOUT_MS = 3000L             // max wait for next UI element to appear
+const val AUTO_CLICK_STEP_POLL_MS = 300L                 // poll interval while waiting
+const val AUTO_CLICK_BETWEEN_STEPS_DELAY_MS = 200L       // 0.2s wait after selecting the option
+const val AUTO_CLICK_MAX_RETRY = 1                       // retry once per step on failure
+
+enum class AutoClickStep {
+    NONE,            // idle
+    WAITING,         // dialog detected, waiting initial delay
+    STEP1_DROPDOWN,  // clicking the dropdown
+    STEP2_OPTION,    // selecting "Share entire screen"
+    STEP3_CONFIRM,   // clicking "Share screen" button
+    DONE
+}
 
 class InputService : AccessibilityService() {
 
@@ -72,11 +89,11 @@ class InputService : AccessibilityService() {
     }
 
     private val logTag = "input service"
+    // ---- MediaProjection dialog auto-click state machine ----
     private val autoClickHandler = Handler(Looper.getMainLooper())
-    private var autoClickRunnable: Runnable? = null
-    // Guard to avoid clicking the same dialog multiple times within a short window
-    private var lastAutoClickTime = 0L
-    private var lastAutoClickPackage = ""
+    private var autoClickStep = AutoClickStep.NONE
+    private var autoClickRetryCount = 0
+    private var autoClickPollCount = 0
     private var leftIsDown = false
     private var touchPath = Path()
     private var stroke: GestureDescription.StrokeDescription? = null
@@ -719,18 +736,25 @@ class InputService : AccessibilityService() {
 
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        // Detect MediaProjection authorization dialog and auto-click after a delay.
+        // Detect MediaProjection authorization dialog and start the auto-click state machine.
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val pkg = event.packageName?.toString() ?: ""
             val cls = event.className?.toString() ?: ""
             Log.d(logTag, "window state changed, package:$pkg class:$cls")
 
-            // MediaProjection consent dialog is hosted by the system UI / media projection
-            // activity. Different OEMs use different package names, so we match on class name
-            // keywords as well as package name keywords.
-            if (isMediaProjectionDialog(pkg, cls)) {
-                Log.w(logTag, "MediaProjection dialog detected, scheduling auto-click in ${AUTO_CLICK_MEDIA_PROJECTION_DELAY_MS}ms")
-                scheduleAutoClick()
+            // Only trigger when the machine is idle, so popup windows spawned by our own
+            // clicks (the dropdown list) do not restart the flow.
+            if (autoClickStep == AutoClickStep.NONE && isMediaProjectionDialog(pkg, cls)) {
+                Log.w(logTag, "[AutoClick] MediaProjection dialog detected, starting in ${AUTO_CLICK_MEDIA_PROJECTION_DELAY_MS}ms")
+                autoClickStep = AutoClickStep.WAITING
+                autoClickRetryCount = 0
+                autoClickPollCount = 0
+                autoClickHandler.postDelayed({
+                    if (autoClickStep == AutoClickStep.WAITING) {
+                        autoClickStep = AutoClickStep.STEP1_DROPDOWN
+                        executeStep1()
+                    }
+                }, AUTO_CLICK_MEDIA_PROJECTION_DELAY_MS)
             }
         }
     }
@@ -753,67 +777,252 @@ class InputService : AccessibilityService() {
         return false
     }
 
-    private fun scheduleAutoClick() {
-        autoClickRunnable?.let { autoClickHandler.removeCallbacks(it) }
-        autoClickRunnable = Runnable {
-            autoClickRunnable = null
-            performMediaProjectionAutoClick()
-        }
-        autoClickHandler.postDelayed(autoClickRunnable!!, AUTO_CLICK_MEDIA_PROJECTION_DELAY_MS)
-    }
+    // ==================================================================================
+    // MediaProjection dialog auto-click: helpers
+    // ==================================================================================
 
     /**
-     * Find the "Start now" / "立即开始" button inside the MediaProjection dialog
-     * and click it via accessibility gesture.
+     * Loose text match: strip all whitespace and compare case-insensitively, so
+     * "Share screen" / "Share  Screen" / "Sharescreen" all match keyword "share screen".
      */
-    @RequiresApi(Build.VERSION_CODES.N)
-    private fun performMediaProjectionAutoClick() {
-        val now = System.currentTimeMillis()
-        val root = rootInActiveWindow ?: run {
-            Log.w(logTag, "performMediaProjectionAutoClick: no active window")
-            return
-        }
+    private fun looseMatch(text: String, keyword: String): Boolean {
+        val t = text.lowercase().replace(" ", "").replace("\n", "").trim()
+        val k = keyword.lowercase().replace(" ", "")
+        return t.isNotEmpty() && t.contains(k)
+    }
 
-        val btn = findConfirmButton(root) ?: run {
-            Log.w(logTag, "performMediaProjectionAutoClick: confirm button not found")
-            return
-        }
-
+    /** Recursively dump the whole node tree with class / id / text / clickable / bounds. */
+    private fun dumpNodeTree(node: AccessibilityNodeInfo, depth: Int) {
+        val indent = "  ".repeat(depth)
         val rect = Rect()
-        btn.getBoundsInScreen(rect)
-        if (rect.isEmpty) {
-            Log.w(logTag, "performMediaProjectionAutoClick: button rect empty")
-            return
+        node.getBoundsInScreen(rect)
+        Log.d(logTag, "[AutoClick][Dump] ${indent}[${node.className}] id=${node.viewIdResourceName} " +
+            "text='${node.text}' clickable=${node.isClickable} bounds=$rect")
+        for (i in 0 until node.childCount) {
+            node.getChild(i)?.let { dumpNodeTree(it, depth + 1) }
         }
-        val cx = rect.centerX()
-        val cy = rect.centerY()
-        Log.w(logTag, "performMediaProjectionAutoClick: clicking at ($cx,$cy), text=${btn.text}")
-        performClick(cx, cy, 50)
     }
 
-    /**
-     * Recursively search the node tree for the "start/confirm" button of the
-     * screen-capture consent dialog.
-     */
-    private fun findConfirmButton(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        // Button keywords across common locales (English / Chinese / Korean for Samsung)
-        val confirmTexts = listOf(
-            "start now", "start", "立即开始", "开始", "시작", "allow", "同意", "확인"
-        )
-        val queue = ArrayDeque<AccessibilityNodeInfo>()
-        queue.addLast(root)
-        while (queue.isNotEmpty()) {
-            val node = queue.removeFirst()
-            val text = node.text?.toString()?.trim()?.lowercase() ?: ""
-            val isButton = node.isClickable || node.className?.toString()?.contains("Button") == true
-            if (isButton && confirmTexts.any { text == it || text.contains(it) }) {
-                return node
-            }
-            for (i in 0 until node.childCount) {
-                node.getChild(i)?.let { queue.addLast(it) }
-            }
+    private fun dumpActiveWindow(tag: String) {
+        val root = rootInActiveWindow
+        if (root == null) {
+            Log.d(logTag, "[AutoClick][Dump:$tag] no active window")
+            return
+        }
+        Log.d(logTag, "[AutoClick][Dump:$tag] ==== active window ====")
+        dumpNodeTree(root, 0)
+    }
+
+    private fun dumpAllWindows(tag: String) {
+        Log.d(logTag, "[AutoClick][Dump:$tag] ==== all windows (${windows.size}) ====")
+        for (w in windows) {
+            Log.d(logTag, "[AutoClick][Dump:$tag] -- window: ${w.packageName} active=${w.isActive} type=${w.type}")
+            w.root?.let { dumpNodeTree(it, 1) }
+        }
+    }
+
+    /** Generic depth-first search over a node tree. */
+    private fun findNodeRecursive(
+        root: AccessibilityNodeInfo?,
+        predicate: (AccessibilityNodeInfo) -> Boolean
+    ): AccessibilityNodeInfo? {
+        if (root == null) return null
+        if (predicate(root)) return root
+        for (i in 0 until root.childCount) {
+            val child = root.getChild(i) ?: continue
+            val result = findNodeRecursive(child, predicate)
+            if (result != null) return result
         }
         return null
+    }
+
+    /**
+     * Search every window (including popup windows such as the dropdown list),
+     * active window first.
+     */
+    private fun findInAllWindows(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        rootInActiveWindow?.let { r ->
+            findNodeRecursive(r, predicate)?.let { return it }
+        }
+        for (w in windows) {
+            val r = w.root ?: continue
+            findNodeRecursive(r, predicate)?.let { return it }
+        }
+        return null
+    }
+
+    /**
+     * Click a node: prefer ACTION_CLICK on the node (or its clickable ancestor up to 5
+     * levels), fall back to a coordinate gesture tap at the node center.
+     */
+    private fun clickNode(node: AccessibilityNodeInfo): Boolean {
+        var n: AccessibilityNodeInfo? = node
+        var depth = 0
+        while (n != null && depth < 5) {
+            if (n.isClickable && n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                Log.d(logTag, "[AutoClick] ACTION_CLICK success (depth=$depth)")
+                return true
+            }
+            n = n.parent
+            depth++
+        }
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        if (rect.isEmpty) return false
+        Log.d(logTag, "[AutoClick] fallback gesture click at (${rect.centerX()},${rect.centerY()})")
+        return try {
+            performClick(rect.centerX(), rect.centerY(), 50)
+        } catch (e: Exception) {
+            Log.e(logTag, "[AutoClick] gesture click error: $e")
+            false
+        }
+    }
+
+    private fun resetAutoClick() {
+        autoClickStep = AutoClickStep.NONE
+        autoClickRetryCount = 0
+        autoClickPollCount = 0
+    }
+
+    /** Handle a step failure: retry once, otherwise give up and dump windows for debugging. */
+    private fun onStepFailed(reason: String) {
+        Log.e(logTag, "[AutoClick] FAILED: $reason (retry=$autoClickRetryCount/$AUTO_CLICK_MAX_RETRY)")
+        if (autoClickRetryCount < AUTO_CLICK_MAX_RETRY) {
+            autoClickRetryCount++
+            Log.w(logTag, "[AutoClick] retrying current step in 500ms...")
+            autoClickHandler.postDelayed({
+                when (autoClickStep) {
+                    AutoClickStep.STEP1_DROPDOWN -> executeStep1()
+                    AutoClickStep.STEP2_OPTION -> { autoClickPollCount = 0; pollStep2() }
+                    AutoClickStep.STEP3_CONFIRM -> executeStep3()
+                    else -> { /* state changed meanwhile, ignore */ }
+                }
+            }, 500)
+        } else {
+            Log.e(logTag, "[AutoClick] giving up after retry, dumping all windows for debugging:")
+            dumpAllWindows("giveup")
+            resetAutoClick()
+        }
+    }
+
+    // ==================================================================================
+    // Step 1: click the dropdown (Spinner) in the consent dialog
+    // ==================================================================================
+    private fun executeStep1() {
+        if (autoClickStep != AutoClickStep.STEP1_DROPDOWN) return
+        Log.w(logTag, "[AutoClick] Step1: looking for dropdown in active window")
+        dumpActiveWindow("Step1")
+
+        val root = rootInActiveWindow
+        if (root == null) {
+            onStepFailed("Step1: no active window")
+            return
+        }
+
+        // Priority: Spinner-like class/id > text 'Share one app' (default selection) >
+        // first clickable non-button element in the dialog.
+        val target = findNodeRecursive(root) { node ->
+            val cls = node.className?.toString()?.lowercase() ?: ""
+            val id = node.viewIdResourceName?.lowercase() ?: ""
+            val text = node.text?.toString() ?: ""
+            (cls.contains("spinner") && (node.isClickable || node.parent?.isClickable == true))
+                || id.contains("spinner")
+                || looseMatch(text, "share one app")
+        } ?: findNodeRecursive(root) { node ->
+            val cls = node.className?.toString()?.lowercase() ?: ""
+            node.isClickable && !cls.contains("button")
+        }
+
+        if (target == null) {
+            onStepFailed("Step1: dropdown not found")
+            return
+        }
+        val rect = Rect()
+        target.getBoundsInScreen(rect)
+        Log.w(logTag, "[AutoClick] Step1: FOUND dropdown (class=${target.className} text='${target.text}') at $rect, clicking")
+        if (clickNode(target)) {
+            autoClickStep = AutoClickStep.STEP2_OPTION
+            autoClickRetryCount = 0
+            autoClickPollCount = 0
+            autoClickHandler.postDelayed({ pollStep2() }, AUTO_CLICK_STEP_POLL_MS)
+        } else {
+            onStepFailed("Step1: click dispatch failed")
+        }
+    }
+
+    // ==================================================================================
+    // Step 2: wait for the popup list, then click "Share entire screen"
+    // ==================================================================================
+    private fun pollStep2() {
+        if (autoClickStep != AutoClickStep.STEP2_OPTION) return
+
+        val found = findInAllWindows { node ->
+            val text = node.text?.toString() ?: ""
+            looseMatch(text, "share entire screen")
+        }
+        if (found != null) {
+            val rect = Rect()
+            found.getBoundsInScreen(rect)
+            Log.w(logTag, "[AutoClick] Step2: FOUND 'Share entire screen' at $rect, clicking")
+            if (clickNode(found)) {
+                autoClickStep = AutoClickStep.STEP3_CONFIRM
+                autoClickRetryCount = 0
+                autoClickHandler.postDelayed({ executeStep3() }, AUTO_CLICK_BETWEEN_STEPS_DELAY_MS)
+            } else {
+                onStepFailed("Step2: click dispatch failed")
+            }
+            return
+        }
+
+        autoClickPollCount++
+        if (autoClickPollCount * AUTO_CLICK_STEP_POLL_MS >= AUTO_CLICK_STEP_TIMEOUT_MS) {
+            dumpAllWindows("Step2-timeout")
+            onStepFailed("Step2: option 'Share entire screen' not found within ${AUTO_CLICK_STEP_TIMEOUT_MS}ms")
+            return
+        }
+        autoClickHandler.postDelayed({ pollStep2() }, AUTO_CLICK_STEP_POLL_MS)
+    }
+
+    // ==================================================================================
+    // Step 3: click the "Share screen" confirm button (bottom-right)
+    // ==================================================================================
+    private fun executeStep3() {
+        if (autoClickStep != AutoClickStep.STEP3_CONFIRM) return
+        Log.w(logTag, "[AutoClick] Step3: looking for confirm button")
+        dumpActiveWindow("Step3")
+
+        val root = rootInActiveWindow
+        if (root == null) {
+            onStepFailed("Step3: no active window")
+            return
+        }
+
+        val metrics = resources.displayMetrics
+        // Priority: text 'Share screen' > clickable Button located in bottom-right quadrant.
+        val target = findNodeRecursive(root) { node ->
+            val text = node.text?.toString() ?: ""
+            looseMatch(text, "share screen")
+        } ?: findNodeRecursive(root) { node ->
+            val cls = node.className?.toString()?.lowercase() ?: ""
+            if (!cls.contains("button") || !node.isClickable) return@findNodeRecursive false
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            rect.centerX() > metrics.widthPixels / 2 && rect.centerY() > metrics.heightPixels / 2
+        }
+
+        if (target == null) {
+            onStepFailed("Step3: confirm button not found")
+            return
+        }
+        val rect = Rect()
+        target.getBoundsInScreen(rect)
+        Log.w(logTag, "[AutoClick] Step3: FOUND confirm (class=${target.className} text='${target.text}') at $rect, clicking")
+        if (clickNode(target)) {
+            Log.w(logTag, "[AutoClick] ALL STEPS DONE")
+            resetAutoClick()
+        } else {
+            onStepFailed("Step3: click dispatch failed")
+        }
     }
 
     override fun onServiceConnected() {
@@ -836,6 +1045,8 @@ class InputService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        autoClickHandler.removeCallbacksAndMessages(null)
+        resetAutoClick()
         ctx = null
         super.onDestroy()
     }
