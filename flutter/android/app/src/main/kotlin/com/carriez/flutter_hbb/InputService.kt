@@ -1036,11 +1036,14 @@ class InputService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         ctx = this
-        val info = AccessibilityServiceInfo()
+        // Start from the XML-configured serviceInfo so eventTypes/feedbackType are
+        // preserved; calling setServiceInfo with a fresh AccessibilityServiceInfo()
+        // wipes eventTypes to 0 and the service stops receiving accessibility events
+        // (which breaks the MediaProjection auto-click state machine).
+        val info = this.serviceInfo
+        info.flags = info.flags or FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         if (Build.VERSION.SDK_INT >= 33) {
-            info.flags = FLAG_INPUT_METHOD_EDITOR or FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-        } else {
-            info.flags = FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            info.flags = info.flags or FLAG_INPUT_METHOD_EDITOR
         }
         setServiceInfo(info)
         fakeEditTextForTextStateCalculation = EditText(this)
