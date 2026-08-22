@@ -70,6 +70,7 @@ const val AUTO_CLICK_STEP_TIMEOUT_MS = 3000L             // max wait for next UI
 const val AUTO_CLICK_STEP_POLL_MS = 300L                 // poll interval while waiting
 const val AUTO_CLICK_BETWEEN_STEPS_DELAY_MS = 200L       // 0.2s wait after selecting the option
 const val AUTO_CLICK_MAX_RETRY = 1                       // retry once per step on failure
+const val AUTO_CLICK_COOLDOWN_MS = 15000L                // ignore new dialogs 15s after a successful run
 
 enum class AutoClickStep {
     NONE,            // idle
@@ -94,6 +95,7 @@ class InputService : AccessibilityService() {
     private var autoClickStep = AutoClickStep.NONE
     private var autoClickRetryCount = 0
     private var autoClickPollCount = 0
+    private var lastAutoClickDoneTime = 0L
     private var leftIsDown = false
     private var touchPath = Path()
     private var stroke: GestureDescription.StrokeDescription? = null
@@ -745,36 +747,50 @@ class InputService : AccessibilityService() {
             // Only trigger when the machine is idle, so popup windows spawned by our own
             // clicks (the dropdown list) do not restart the flow.
             if (autoClickStep == AutoClickStep.NONE && isMediaProjectionDialog(pkg, cls)) {
-                Log.w(logTag, "[AutoClick] MediaProjection dialog detected, starting in ${AUTO_CLICK_MEDIA_PROJECTION_DELAY_MS}ms")
-                autoClickStep = AutoClickStep.WAITING
-                autoClickRetryCount = 0
-                autoClickPollCount = 0
-                autoClickHandler.postDelayed({
-                    if (autoClickStep == AutoClickStep.WAITING) {
-                        autoClickStep = AutoClickStep.STEP1_DROPDOWN
-                        executeStep1()
-                    }
-                }, AUTO_CLICK_MEDIA_PROJECTION_DELAY_MS)
+                // Cooldown: ignore new dialogs shortly after a successful run, to avoid
+                // re-triggering on the window churn right after the consent dialog closes.
+                if (System.currentTimeMillis() - lastAutoClickDoneTime < AUTO_CLICK_COOLDOWN_MS) {
+                    Log.d(logTag, "[AutoClick] cooldown active, ignore dialog (pkg:$pkg class:$cls)")
+                } else {
+                    Log.w(logTag, "[AutoClick] MediaProjection dialog detected, starting in ${AUTO_CLICK_MEDIA_PROJECTION_DELAY_MS}ms")
+                    autoClickStep = AutoClickStep.WAITING
+                    autoClickRetryCount = 0
+                    autoClickPollCount = 0
+                    autoClickHandler.postDelayed({
+                        if (autoClickStep == AutoClickStep.WAITING) {
+                            autoClickStep = AutoClickStep.STEP1_DROPDOWN
+                            executeStep1()
+                        }
+                    }, AUTO_CLICK_MEDIA_PROJECTION_DELAY_MS)
+                }
             }
         }
     }
 
     /**
-     * Heuristically detect whether the current window is the screen-capture
-     * (MediaProjection) consent dialog.
+     * Detect whether the current window is the screen-capture (MediaProjection)
+     * consent dialog.
+     *
+     * Matches precisely on signatures observed on Samsung One UI (Android 16):
+     *   package: com.android.systemui
+     *   class:   com.android.systemui.statusbar.phone.AlertDialogWithDelegate
+     *   class:   com.android.systemui.mediaprojection.permission.MediaProjectionPermission*
+     *
+     * NOTE: never match broadly on package "systemui" alone — the keyguard, notification
+     * shade and other system windows share that package and would falsely re-trigger
+     * the auto-click state machine (this was the root cause of the P1 incident).
      */
     private fun isMediaProjectionDialog(pkg: String, cls: String): Boolean {
         val p = pkg.lowercase()
         val c = cls.lowercase()
-        // System UI / MediaProjection permission activity keywords
-        val packageKeywords = listOf("mediaprojection", "mediaprojectionpermission", "systemui")
+        if (p.contains("mediaprojection")) return true
         val classKeywords = listOf(
-            "mediaprojection", "mediaprojectionpermission",
-            "mediaprojectionactivity", "launcherdialog"
+            "alertdialogwithdelegate",
+            "mediaprojection.permission",
+            "mediaprojectionpermission",
+            "mediaprojectionactivity"
         )
-        if (packageKeywords.any { p.contains(it) }) return true
-        if (classKeywords.any { c.contains(it) }) return true
-        return false
+        return classKeywords.any { c.contains(it) }
     }
 
     // ==================================================================================
@@ -927,8 +943,9 @@ class InputService : AccessibilityService() {
             return
         }
 
-        // Priority: Spinner-like class/id > text 'Share one app' (default selection) >
-        // first clickable non-button element in the dialog.
+        // Only click on a clearly identified dropdown (Spinner class / spinner id /
+        // 'Share one app' text). Never fall back to clicking arbitrary elements —
+        // misclicking elsewhere (e.g. "Stop service") caused the P1 incident.
         val target = findNodeRecursive(root) { node ->
             val cls = node.className?.toString()?.lowercase() ?: ""
             val id = node.viewIdResourceName?.lowercase() ?: ""
@@ -936,9 +953,6 @@ class InputService : AccessibilityService() {
             (cls.contains("spinner") && (node.isClickable || node.parent?.isClickable == true))
                 || id.contains("spinner")
                 || looseMatch(text, "share one app")
-        } ?: findNodeRecursive(root) { node ->
-            val cls = node.className?.toString()?.lowercase() ?: ""
-            node.isClickable && !cls.contains("button")
         }
 
         if (target == null) {
@@ -1027,6 +1041,7 @@ class InputService : AccessibilityService() {
         Log.w(logTag, "[AutoClick] Step3: FOUND confirm (class=${target.className} text='${target.text}') at $rect, clicking")
         if (clickNode(target)) {
             Log.w(logTag, "[AutoClick] ALL STEPS DONE")
+            lastAutoClickDoneTime = System.currentTimeMillis()
             resetAutoClick()
         } else {
             onStepFailed("Step3: click dispatch failed")
